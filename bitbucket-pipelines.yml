@@ -1,0 +1,182 @@
+image: atlassian/default-image:4
+
+pipelines:
+  branches:
+    release/development:
+      - step:
+          name: Fetch .env file from S3
+          image: amazon/aws-cli
+          script:
+            - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
+            - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
+            - aws configure set default.region ${AWS_REGION}
+            - aws s3 cp s3://${ENVS}/${BITBUCKET_REPO_SLUG}/dev.env .env
+          artifacts:
+            - .env
+      # - step:
+      #     name: Unit tests
+      #     image: node:20.16.0
+      #     script:
+      #       - npm install
+      #       - npm run test:cov
+      #     artifacts:
+      #       - coverage/**
+      - step:
+          name: Building & pushing Docker image
+          size: 8x
+          services:
+            - docker-build
+          script:
+            - docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}
+            - docker build . -t ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:dev
+            - docker push ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:dev
+      - step:
+          name: "Deployment (Development)"
+          deployment: Development
+          script:           
+           - pipe: atlassian/scp-deploy:1.5.1
+             variables:
+               USER: ${DEFAULT_SSH_USER}
+               SERVER: ${HOST}
+               SSH_KEY: ${DEFAULT_SSH_KEY}
+               REMOTE_PATH: '/home/${DEFAULT_SSH_USER}'
+               LOCAL_PATH: 'docker-compose.yml'
+               EXTRA_ARGS: ["-P", "${DEFAULT_SSH_PORT}", "-o", "StrictHostKeyChecking=no"]
+               DEBUG: 'true'
+           - pipe: atlassian/ssh-run:0.8.1
+             variables:
+               SSH_USER: ${DEFAULT_SSH_USER}
+               SERVER: ${HOST}
+               PORT: ${DEFAULT_SSH_PORT}
+               SSH_KEY: ${DEFAULT_SSH_KEY}
+               MODE: 'script'
+               COMMAND: 'deploy.sh'
+               ENV_VARS: >-
+                 ENV=dev
+                 DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+                 DOCKERHUB_PASSWORD=${DOCKERHUB_PASSWORD}
+                 BITBUCKET_REPO_SLUG=${BITBUCKET_REPO_SLUG}
+                 DEFAULT_SSH_USER=${DEFAULT_SSH_USER}
+      - step:
+          name: "Notification"
+          script:
+          - pipe: atlassian/ms-teams-notify:0.1.0
+            variables:
+              WEBHOOK_URL: $MS_TEAMS_WEBHOOK_URL
+              MESSAGE: '"${BITBUCKET_REPO_SLUG} - ${BITBUCKET_BUILD_NUMBER} deployment succeeded"'
+
+    release/staging:
+      - step:
+          name: Fetch .env file from S3
+          image: amazon/aws-cli
+          script:
+            - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
+            - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
+            - aws configure set default.region ${AWS_REGION}
+            - aws s3 cp s3://${ENVS}/${BITBUCKET_REPO_SLUG}/stg.env .env
+          artifacts:
+            - .env
+      - step:
+          name: Building & pushing Docker image
+          size: 8x
+          services:
+            - docker-build
+          script:
+            - docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}
+            - docker build . -t ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:stg
+            - docker push ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:stg
+      - step:
+          name: "Deployment (Staging)"
+          deployment: Staging
+          script:           
+           - pipe: atlassian/scp-deploy:1.5.1
+             variables:
+               USER: ${DEFAULT_SSH_USER}
+               SERVER: ${HOST}
+               SSH_KEY: ${DEFAULT_SSH_KEY}
+               REMOTE_PATH: '/home/${DEFAULT_SSH_USER}'
+               LOCAL_PATH: 'docker-compose.yml'
+               EXTRA_ARGS: ["-P", "${DEFAULT_SSH_PORT}", "-o", "StrictHostKeyChecking=no"]
+               DEBUG: 'true'
+           - pipe: atlassian/ssh-run:0.8.1
+             variables:
+               SSH_USER: ${DEFAULT_SSH_USER}
+               SERVER: ${HOST}
+               PORT: ${DEFAULT_SSH_PORT}
+               SSH_KEY: ${DEFAULT_SSH_KEY}
+               MODE: 'script'
+               COMMAND: 'deploy.sh'
+               ENV_VARS: >-
+                 ENV=stg
+                 DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+                 DOCKERHUB_PASSWORD=${DOCKERHUB_PASSWORD}
+                 BITBUCKET_REPO_SLUG=${BITBUCKET_REPO_SLUG}
+                 DEFAULT_SSH_USER=${DEFAULT_SSH_USER}
+      - step:
+          name: "Notification"
+          script:
+          - pipe: atlassian/ms-teams-notify:0.1.0
+            variables:
+              WEBHOOK_URL: $MS_TEAMS_WEBHOOK_URL
+              MESSAGE: '"${BITBUCKET_REPO_SLUG} - ${BITBUCKET_BUILD_NUMBER} deployment succeeded"'
+    
+    release/production:
+          - step:
+              name: Fetch .env file from S3
+              image: amazon/aws-cli
+              script:
+                - aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
+                - aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
+                - aws configure set default.region ${AWS_REGION}
+                - aws s3 cp s3://${ENVS}/${BITBUCKET_REPO_SLUG}/prod.env .env
+              artifacts:
+                - .env
+          - step:
+              name: Building & pushing Docker image
+              size: 8x
+              services:
+                - docker-build
+              script:
+                - docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}
+                - docker build . -t ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:prod
+                - docker push ${DOCKERHUB_USERNAME}/${BITBUCKET_REPO_SLUG}:prod
+          - step:
+              name: "Deployment (Production)"
+              deployment: Production
+              script:           
+              - pipe: atlassian/scp-deploy:1.5.1
+                variables:
+                  USER: ${DEFAULT_SSH_USER}
+                  SERVER: ${HOST}
+                  SSH_KEY: ${DEFAULT_SSH_KEY}
+                  REMOTE_PATH: '/home/${DEFAULT_SSH_USER}'
+                  LOCAL_PATH: 'docker-compose.yml'
+                  EXTRA_ARGS: ["-P", "${DEFAULT_SSH_PORT}", "-o", "StrictHostKeyChecking=no"]
+                  DEBUG: 'true'
+              - pipe: atlassian/ssh-run:0.8.1
+                variables:
+                  SSH_USER: ${DEFAULT_SSH_USER}
+                  SERVER: ${HOST}
+                  PORT: ${DEFAULT_SSH_PORT}
+                  SSH_KEY: ${DEFAULT_SSH_KEY}
+                  MODE: 'script'
+                  COMMAND: 'deploy.sh'
+                  ENV_VARS: >-
+                    ENV=prod
+                    DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+                    DOCKERHUB_PASSWORD=${DOCKERHUB_PASSWORD}
+                    BITBUCKET_REPO_SLUG=${BITBUCKET_REPO_SLUG}
+                    DEFAULT_SSH_USER=${DEFAULT_SSH_USER}
+          - step:
+              name: "Notification"
+              script:
+              - pipe: atlassian/ms-teams-notify:0.1.0
+                variables:
+                  WEBHOOK_URL: $MS_TEAMS_WEBHOOK_URL
+                  MESSAGE: '"${BITBUCKET_REPO_SLUG} - ${BITBUCKET_BUILD_NUMBER} deployment succeeded"'
+
+definitions:
+  services:
+    docker-build:
+      memory: 6144
+      type: docker
